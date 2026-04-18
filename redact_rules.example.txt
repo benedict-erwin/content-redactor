@@ -1,55 +1,57 @@
 # =============================================================================
 # redact_rules.example.txt
-# Example replacement rules for Content Redactor
-# 
-# Format: old_value=new_value
-# One rule per line. Lines starting with # are comments and will be ignored.
+# Example replacement rules for Content Redactor v2.3
+#
+# Format:
+#   old_value=new_value
+#   One rule per line.
+#   Lines starting with # are comments and will be ignored.
 # =============================================================================
 
-# === Domain Redaction ===
+# === Domains ===
 production.example.com=internal.example.local
 staging.example.com=internal.staging.local
 api.live.example.com=api.internal.local
 dashboard.realcompany.com=dashboard.internal.local
 
-# === IP Address Redaction ===
+# === IP Addresses ===
 192.168.10.45=10.0.0.45
 172.16.5.100=10.0.0.100
 203.0.113.50=10.0.0.50
 
-# === Email Redaction ===
+# === Emails ===
 admin@realcompany.com=admin@internal.local
 user@production.example.com=user@internal.local
 support@staging.example.com=support@internal.local
 
-# === Username / Account Redaction ===
+# === Usernames ===
 admin-prod=admin-dev
 superadmin=internal-admin
 dev-user=test-user
 
-# === URL Redaction (using regex) ===
+# === URLs (best used with --regex) ===
 https?://api\.production\.example\.com=https://api.internal.local
 https?://app\.staging\.example\.com=https://app.internal.local
 
-# === Token / Secret Redaction ===
+# === Tokens & Secrets ===
 sk_live_[a-zA-Z0-9]{20,}=REDACTED_SECRET_KEY
 Bearer [a-zA-Z0-9]{30,}=REDACTED_BEARER_TOKEN
 
-# === Generic Sensitive Terms ===
+# === Generic Sensitive Words ===
 password=REDACTED_PASSWORD
 secret=REDACTED_SECRET
 api_key=REDACTED_API_KEY
 private-key=REDACTED_PRIVATE_KEY
 
-# === Environment Specific ===
+# === Environment Flags ===
 PROD_ENV=INTERNAL_ENV
 PRODUCTION=true
 STAGING=false
 
 # =============================================================================
 # Tips:
-# - For simple string replacement, just use old=new
-# - For complex patterns (like URLs or tokens), enable --regex when running
-# - Always test with --dry-run first
-# - Do not put real sensitive data in this file
+# - Use simple string replacement by default
+# - Enable --regex when using patterns with . * ? etc.
+# - Always test your rules with --dry-run first
+# - Do not put real sensitive data in this example file
 # =============================================================================
