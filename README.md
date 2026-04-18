@@ -1,140 +1,132 @@
 # Content Redactor
 
-**A safe, recursive content replacer for sensitive data (domains, IPs, emails, usernames, tokens, etc.)**
+**Safe recursive content replacer for sensitive data**  
+Replace domains, IP addresses, emails, usernames, tokens, and other sensitive information without touching the original files.
 
-This Python script scans a folder recursively, replaces sensitive strings (or regex patterns) in text files, and **creates new files** with a suffix (default: `-redacted`).  
-The original files are **never modified** — keeping your source data 100% safe.
-
-Perfect for redacting production domains, real IPs, emails, API keys, or credentials before sharing logs, configs, or code.
+**Version:** 2.3
 
 ## Features
 
-- Recursive processing (all subfolders)
-- Specify any number of file extensions
+- Recursive processing of folders and subfolders
+- Only processes specified file extensions
+- **Never modifies** original files — always creates new files
 - Multiple replacement rules (plain string or regex)
-- Load rules from a file (recommended for many rules)
-- Creates new files with suffix → original files untouched
-- `--dry-run` mode for safe preview
-- Skips already redacted files automatically
-- Pure Python Standard Library (no external dependencies)
-- Works great with `.env`, `.json`, `.yaml`, `.log`, `.txt`, `.md`, `.conf`, etc.
+- Load rules from a file (`--rules-file`)
+- `--output` option to save results to a separate directory
+- `--flat` mode: flatten all output into one folder (with folder prefix to prevent name collisions)
+- `--dry-run` mode for safe preview before actual processing
+- Pure Python — no external dependencies
 
 ## Requirements
 
 - Python 3.6 or higher
-- No external packages required (zero dependencies)
+- No external packages required
 
 ## Quick Start
 
-### 1. Clone or Download
-
-```bash
-git clone https://github.com/benedict-erwin/content-redactor.git
-cd content-redactor
-```
-
-### 2. (Recommended) Use a Virtual Environment
+### 1. Recommended: Use Virtual Environment
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate        # Linux / macOS
 # venv\Scripts\activate         # Windows
-
-# No pip install needed!
 ```
 
-### 3. Create a Rules File
+### 2. Prepare Rules File
 
-Create `redact_rules.txt` (example):
-
-```txt
-# Redaction rules - one per line (old=new)
-production.example.com=internal.example.local
-staging.example.com=internal.staging.local
-192.168.10.45=10.0.0.45
-admin@realcompany.com=admin@internal.local
-admin-prod=admin-dev
-https?://api\.live\.com=https://api.internal.local
-super-secret-token=REDACTED-TOKEN
-```
-
-### 4. Run the Script
-
-**Dry-run first (highly recommended):**
+Copy the example and customize:
 
 ```bash
-python redact.py ./target_folder \
-  --extensions .txt,.json,.yaml,.env,.log,.md,.conf \
-  --rules-file redact_rules.txt \
-  --dry-run
+cp redact_rules.example.txt redact_rules.txt
 ```
 
-**Real run:**
+Edit `redact_rules.txt` with your own replacement rules.
+
+### 3. Run the Script
+
+**Basic usage (files created next to originals):**
 
 ```bash
-python redact.py ./target_folder \
-  --extensions .txt,.json,.yaml,.env,.log,.md,.conf \
+python redact.py ./source-folder \
+  --extensions .txt,.json,.env,.log,.yaml,.md \
   --rules-file redact_rules.txt
 ```
 
-### Alternative: Inline Rules (for quick use)
+**Recommended: Save to separate output folder (preserves structure):**
 
 ```bash
-python redact.py ./myproject \
-  --extensions .env,.json \
-  --replace "production.example.com=internal.example.local" \
-  --replace "192.168.100.50=10.0.0.50" \
-  --suffix -redacted
+python redact.py ./source-folder \
+  --extensions .txt,.json,.env,.log,.yaml,.md \
+  --rules-file redact_rules.txt \
+  --output ./redacted-output
+```
+
+**Flat mode (all files in one folder):**
+
+```bash
+python redact.py ./source-folder \
+  --extensions .txt,.json,.env,.log,.yaml,.md \
+  --rules-file redact_rules.txt \
+  --output ./redacted-output \
+  --flat
+```
+
+**Always test first with dry-run:**
+
+```bash
+python redact.py ./source-folder \
+  --extensions .txt,.json,.env \
+  --rules-file redact_rules.txt \
+  --output ./redacted-output \
+  --dry-run
 ```
 
 ## Command Line Options
 
-| Argument           | Description                                              | Default          |
-|--------------------|----------------------------------------------------------|------------------|
-| `directory`        | Target folder (required)                                 | -                |
-| `--extensions`     | Comma-separated file extensions                          | required         |
-| `--rules-file`     | File containing replacement rules (one per line)         | -                |
-| `--replace`        | Inline replacement rule (`SEARCH=REPLACE`) — repeatable  | -                |
-| `--suffix`         | Suffix for new files                                     | `-redacted`      |
-| `--regex`          | Enable regex mode (`re.sub`)                             | False            |
-| `--dry-run`        | Preview only, do not create files                        | False            |
-| `--encoding`       | File encoding                                            | `utf-8`          |
+| Argument           | Description                                                                 | Default          |
+|--------------------|-----------------------------------------------------------------------------|------------------|
+| `directory`        | Source directory to process (required)                                      | -                |
+| `--extensions`     | Comma-separated file extensions to process                                  | required         |
+| `--rules-file`     | File containing replacement rules (one per line)                            | -                |
+| `--replace`        | Inline replacement rule (`SEARCH=REPLACE`) — can be used multiple times     | -                |
+| `--suffix`         | Suffix added to new files                                                   | `-redacted`      |
+| `--output`         | Base output directory (if not set, files created next to originals)         | None             |
+| `--flat`           | Flatten all files into one folder (adds folder prefix to filename)          | False            |
+| `--regex`          | Enable regex mode (`re.sub`)                                                | False            |
+| `--dry-run`        | Preview only — do not create any files                                      | False            |
+| `--encoding`       | File encoding                                                               | `utf-8`          |
 
-## Example Output
+## Output Behavior
 
-```
-🚀 Starting redaction in folder: /home/user/project
-   Extensions       : .json, .env, .log
-   Number of rules  : 6
-   New file suffix  : -redacted
-   Mode             : String Replace
-   Dry-run          : No
+- **Without `--output`**: New files are created next to the original files (same folder structure).
+- **With `--output` (default)**: Preserves the original folder structure inside the output directory.
+  - Example: `source-a/sub-b/file.txt` → `redacted-output/source-a/sub-b/file-redacted.txt`
+- **With `--output` + `--flat`**: All files are placed in a single flat directory.
+  - To avoid name collisions, folder names are added as prefix using `_`.
+  - Example: `source-a/sub-b/file.txt` → `redacted-output/source-a_sub-b_file-redacted.txt`
 
-✅ Created: config-redacted.json
-✅ Created: .env-redacted
-...
+## Example Rules File
 
-==================================================
-✅ PROCESS COMPLETED!
-   Files processed     : 15
-   Files created       : 11
-   Files skipped       : 4
-==================================================
-Original files remain 100% untouched.
-```
+See `redact_rules.example.txt` for a complete example covering:
+- Domains
+- IP addresses
+- Emails
+- Usernames
+- URLs (with regex)
+- Tokens & secrets
 
 ## Important Notes
 
-- Files ending with the chosen suffix (e.g., `-redacted`) are automatically skipped to prevent re-processing.
-- Only text files are processed. Binary files (images, PDFs, etc.) are skipped.
-- Replacements are applied in the order listed in the rules file.
+- Files ending with the chosen suffix (e.g. `-redacted`) are automatically skipped.
+- Only text files are processed. Binary files are ignored.
 - Always run with `--dry-run` first when testing new rules.
+- Original files are **never modified**.
 
 ## Repository Files
 
-- `redact.py`          — Main script
-- `redact_rules.example.txt` — Example rules file
-- `.gitignore`         — Ignores venv and redacted files
+- `redact.py`                    — Main script
+- `redact_rules.example.txt`     — Example replacement rules
+- `.gitignore`                   — Recommended gitignore
 
 ## License
 
@@ -142,4 +134,4 @@ MIT License — Free to use, modify, and distribute.
 
 ---
 
-Made for safe redaction of sensitive information.
+**Made for safe redaction of sensitive information.**
