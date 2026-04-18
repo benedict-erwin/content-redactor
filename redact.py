@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
 """
-Content Redactor v2.1
-Safe recursive content replacer for sensitive data (domains, IPs, emails, usernames, tokens, etc.)
-
-Features:
-- Processes folders recursively
-- Only processes specified file extensions
-- Creates new files with suffix (default: -redacted) — original files are NEVER modified
-- Supports multiple replacement rules (string or regex)
-- Supports loading rules from a file
-- Dry-run mode for safe preview
-- Skips already redacted files automatically
+Content Redactor v2.3
+Safe recursive content replacer with support for custom output directory and flat mode.
+Original files are NEVER modified.
 """
 
 import argparse
@@ -20,10 +12,9 @@ import sys
 
 
 def load_replacement_rules(rules_args=None, rules_file=None):
-    """Load replacement rules from command line arguments and/or rules file."""
+    """Load replacement rules from arguments and/or rules file."""
     rules = []
     
-    # Load from --replace arguments
     if rules_args:
         for rule in rules_args:
             if "=" not in rule:
@@ -32,7 +23,6 @@ def load_replacement_rules(rules_args=None, rules_file=None):
             search, replace = rule.split("=", 1)
             rules.append((search.strip(), replace.strip()))
     
-    # Load from rules file
     if rules_file:
         try:
             with open(rules_file, "r", encoding="utf-8") as f:
@@ -41,11 +31,11 @@ def load_replacement_rules(rules_args=None, rules_file=None):
                     if not line or line.startswith("#"):
                         continue
                     if "=" not in line:
-                        print(f"⚠️  Invalid rule format on line {line_num}: {line}")
+                        print(f"⚠️  Invalid rule on line {line_num}: {line}")
                         continue
                     search, replace = line.split("=", 1)
                     rules.append((search.strip(), replace.strip()))
-            print(f"✅ Successfully loaded {len(rules)} rules from {rules_file}")
+            print(f"✅ Loaded {len(rules)} rules from {rules_file}")
         except Exception as e:
             print(f"❌ Failed to read rules file: {e}")
             sys.exit(1)
@@ -57,19 +47,31 @@ def load_replacement_rules(rules_args=None, rules_file=None):
     return rules
 
 
+def get_flat_filename(file_path: Path, src_dir: Path, suffix: str) -> str:
+    """Generate flat filename with folder structure as prefix to avoid name collision."""
+    relative = file_path.relative_to(src_dir)
+    parts = list(relative.parent.parts)
+    if parts:
+        prefix = "_".join(parts) + "_"
+    else:
+        prefix = ""
+    
+    return f"{prefix}{relative.stem}{suffix}{relative.suffix}"
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Safe Content Redactor - Replace sensitive data recursively without modifying original files",
+        description="Safe Content Redactor v2.3 - Replace sensitive data recursively",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         "directory",
-        help="Target directory to process (recursive)"
+        help="Source directory to process (recursive)"
     )
     parser.add_argument(
         "--extensions",
         required=True,
-        help="Comma-separated file extensions to process (e.g. .txt,.json,.env,.log,.yaml,.md)"
+        help="Comma-separated file extensions (e.g. .txt,.json,.env,.log,.yaml,.md)"
     )
     parser.add_argument(
         "--replace",
@@ -80,22 +82,32 @@ def main():
     parser.add_argument(
         "--rules-file",
         metavar="FILE",
-        help="File containing list of replacement rules (one rule per line)"
+        help="File containing replacement rules (one per line)"
     )
     parser.add_argument(
         "--suffix",
         default="-redacted",
-        help="Suffix for newly created files (default: -redacted)"
+        help="Suffix for new files (default: -redacted)"
+    )
+    parser.add_argument(
+        "--output",
+        metavar="OUTPUT_DIR",
+        help="Base output directory. Preserves folder structure by default."
+    )
+    parser.add_argument(
+        "--flat",
+        action="store_true",
+        help="Put all files in one flat directory (adds folder prefix to filename to avoid collision)"
     )
     parser.add_argument(
         "--regex",
         action="store_true",
-        help="Enable regex mode (uses re.sub instead of string replace)"
+        help="Enable regex mode (re.sub)"
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview changes only, do not create any files"
+        help="Preview only, do not create files"
     )
     parser.add_argument(
         "--encoding",
@@ -105,49 +117,54 @@ def main():
 
     args = parser.parse_args()
 
-    # Validate directory
-    dir_path = Path(args.directory).resolve()
-    if not dir_path.is_dir():
-        print(f"❌ Error: '{dir_path}' is not a valid directory.")
+    src_dir = Path(args.directory).resolve()
+    if not src_dir.is_dir():
+        print(f"❌ Error: Source directory '{src_dir}' does not exist.")
         sys.exit(1)
 
-    # Parse extensions
-    extensions = {ext.strip().lower() for ext in args.extensions.split(",") if ext.strip()}
+    # Setup output directory
+    if args.output:
+        output_base = Path(args.output).resolve()
+        output_base.mkdir(parents=True, exist_ok=True)
+        print(f"📁 Output directory : {output_base}")
+    else:
+        output_base = None
 
-    # Load replacement rules
+    if args.flat and not output_base:
+        print("⚠️  Warning: --flat is only meaningful when used with --output. Ignoring --flat.")
+
+    extensions = {ext.strip().lower() for ext in args.extensions.split(",") if ext.strip()}
     replacement_rules = load_replacement_rules(args.replace, args.rules_file)
 
-    print(f"🚀 Starting redaction in folder: {dir_path}")
+    print(f"🚀 Starting redaction in folder: {src_dir}")
     print(f"   Extensions       : {', '.join(sorted(extensions))}")
     print(f"   Number of rules  : {len(replacement_rules)}")
     print(f"   New file suffix  : {args.suffix}")
-    print(f"   Mode             : {'Regex' if args.regex else 'String Replace'}")
+    print(f"   Output mode      : {'Flat' if args.flat and output_base else 'Preserve structure'}")
     print(f"   Dry-run          : {'Yes' if args.dry_run else 'No'}\n")
 
     processed = 0
     created = 0
     skipped = 0
 
-    # Process all files recursively
-    for file_path in dir_path.rglob("*"):
+    for file_path in src_dir.rglob("*"):
         if not file_path.is_file():
             continue
         if file_path.suffix.lower() not in extensions:
             continue
         if file_path.stem.endswith(args.suffix):
             skipped += 1
-            continue  # Skip already redacted files
+            continue
 
         try:
             content = file_path.read_text(encoding=args.encoding)
         except UnicodeDecodeError:
-            print(f"⏭️  Skipped (not a text file): {file_path.name}")
+            print(f"⏭️  Skipped (not text): {file_path.name}")
             continue
         except Exception as e:
-            print(f"❌ Error reading {file_path.name}: {e}")
+            print(f"❌ Error reading {file_path}: {e}")
             continue
 
-        # Apply all replacement rules
         new_content = content
         for search, replace in replacement_rules:
             if args.regex:
@@ -155,29 +172,39 @@ def main():
             else:
                 new_content = new_content.replace(search, replace)
 
-        # Skip if no changes were made
         if new_content == content:
             skipped += 1
             continue
 
-        # Create new file name
-        new_filename = f"{file_path.stem}{args.suffix}{file_path.suffix}"
-        new_path = file_path.parent / new_filename
+        # Determine output path
+        if output_base:
+            if args.flat:
+                new_filename = get_flat_filename(file_path, src_dir, args.suffix)
+                new_path = output_base / new_filename
+            else:
+                # Preserve folder structure
+                relative = file_path.relative_to(src_dir)
+                new_filename = f"{relative.stem}{args.suffix}{relative.suffix}"
+                new_path = output_base / relative.parent / new_filename
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            # Default: next to original file
+            new_filename = f"{file_path.stem}{args.suffix}{file_path.suffix}"
+            new_path = file_path.parent / new_filename
 
         if args.dry_run:
-            print(f"[DRY-RUN] Would create → {new_path.name}")
+            print(f"[DRY-RUN] Would create → {new_path}")
         else:
             try:
                 new_path.write_text(new_content, encoding=args.encoding)
-                print(f"✅ Created: {new_path.name}")
+                print(f"✅ Created: {new_path}")
                 created += 1
             except Exception as e:
-                print(f"❌ Failed to write {new_path.name}: {e}")
+                print(f"❌ Failed to write {new_path}: {e}")
                 continue
 
         processed += 1
 
-    # Final summary
     print("\n" + "=" * 70)
     print("✅ PROCESS COMPLETED!")
     print(f"   Files processed     : {processed}")
@@ -185,8 +212,6 @@ def main():
     print(f"   Files skipped       : {skipped}")
     print("=" * 70)
     print("Original files remain 100% untouched and safe.")
-    if not args.dry_run and created > 0:
-        print(f"You can now use the newly created *-redacted files.")
 
 
 if __name__ == "__main__":
