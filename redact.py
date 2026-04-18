@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Content Redactor v2.3
-Safe recursive content replacer with support for custom output directory and flat mode.
-Original files are NEVER modified.
+Content Redactor v2.4
+Safe recursive content replacer with optional file/folder renaming.
+Original files and folders are NEVER modified.
 """
 
 import argparse
@@ -47,73 +47,77 @@ def load_replacement_rules(rules_args=None, rules_file=None):
     return rules
 
 
-def get_flat_filename(file_path: Path, src_dir: Path, suffix: str) -> str:
-    """Generate flat filename with folder structure as prefix to avoid name collision."""
+def apply_name_replacement(name: str, rules: list, use_regex: bool) -> str:
+    """Apply replacement rules to a filename or folder name."""
+    for search, replace in rules:
+        if use_regex:
+            name = re.sub(search, replace, name)
+        else:
+            name = name.replace(search, replace)
+    return name
+
+
+def get_output_path(file_path: Path, src_dir: Path, output_base: Path, suffix: str, 
+                   flat: bool, rename: bool, rules: list, use_regex: bool):
+    """Generate the final output path with optional renaming."""
     relative = file_path.relative_to(src_dir)
-    parts = list(relative.parent.parts)
-    if parts:
-        prefix = "_".join(parts) + "_"
-    else:
-        prefix = ""
     
-    return f"{prefix}{relative.stem}{suffix}{relative.suffix}"
+    if rename:
+        # Rename each folder part + filename
+        new_parts = []
+        for part in relative.parent.parts:
+            new_part = apply_name_replacement(part, rules, use_regex)
+            new_parts.append(new_part)
+        
+        new_filename = apply_name_replacement(relative.stem, rules, use_regex)
+        new_filename = f"{new_filename}{suffix}{relative.suffix}"
+    else:
+        new_parts = relative.parent.parts
+        new_filename = f"{relative.stem}{suffix}{relative.suffix}"
+
+    if output_base:
+        if flat:
+            # Flat mode: use underscore prefix from (renamed) folders
+            prefix = "_".join(new_parts) + "_" if new_parts else ""
+            final_name = f"{prefix}{new_filename}"
+            return output_base / final_name
+        else:
+            # Preserve structure with renamed folders
+            new_path = output_base
+            for part in new_parts:
+                new_path = new_path / part
+            new_path.mkdir(parents=True, exist_ok=True)
+            return new_path / new_filename
+    else:
+        # Default: next to original
+        return file_path.parent / new_filename
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Safe Content Redactor v2.3 - Replace sensitive data recursively",
+        description="Content Redactor v2.4 - Replace content + optionally rename files/folders",
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument(
-        "directory",
-        help="Source directory to process (recursive)"
-    )
-    parser.add_argument(
-        "--extensions",
-        required=True,
-        help="Comma-separated file extensions (e.g. .txt,.json,.env,.log,.yaml,.md)"
-    )
-    parser.add_argument(
-        "--replace",
-        action="append",
-        metavar="SEARCH=REPLACE",
-        help="Replacement rule (can be used multiple times)"
-    )
-    parser.add_argument(
-        "--rules-file",
-        metavar="FILE",
-        help="File containing replacement rules (one per line)"
-    )
-    parser.add_argument(
-        "--suffix",
-        default="-redacted",
-        help="Suffix for new files (default: -redacted)"
-    )
-    parser.add_argument(
-        "--output",
-        metavar="OUTPUT_DIR",
-        help="Base output directory. Preserves folder structure by default."
-    )
-    parser.add_argument(
-        "--flat",
-        action="store_true",
-        help="Put all files in one flat directory (adds folder prefix to filename to avoid collision)"
-    )
-    parser.add_argument(
-        "--regex",
-        action="store_true",
-        help="Enable regex mode (re.sub)"
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Preview only, do not create files"
-    )
-    parser.add_argument(
-        "--encoding",
-        default="utf-8",
-        help="File encoding (default: utf-8)"
-    )
+    parser.add_argument("directory", help="Source directory to process")
+    parser.add_argument("--extensions", required=True, 
+                        help="Comma-separated extensions (e.g. .txt,.json,.env)")
+    parser.add_argument("--replace", action="append", metavar="SEARCH=REPLACE",
+                        help="Replacement rule")
+    parser.add_argument("--rules-file", metavar="FILE",
+                        help="Rules file")
+    parser.add_argument("--suffix", default="-redacted", 
+                        help="Suffix for new files (default: -redacted)")
+    parser.add_argument("--output", metavar="DIR",
+                        help="Output base directory")
+    parser.add_argument("--flat", action="store_true",
+                        help="Put all files in one flat directory")
+    parser.add_argument("--rename", action="store_true",
+                        help="Also apply replacement rules to folder names and filenames")
+    parser.add_argument("--regex", action="store_true",
+                        help="Enable regex mode")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Preview only")
+    parser.add_argument("--encoding", default="utf-8")
 
     args = parser.parse_args()
 
@@ -122,24 +126,23 @@ def main():
         print(f"❌ Error: Source directory '{src_dir}' does not exist.")
         sys.exit(1)
 
-    # Setup output directory
     if args.output:
         output_base = Path(args.output).resolve()
         output_base.mkdir(parents=True, exist_ok=True)
         print(f"📁 Output directory : {output_base}")
     else:
         output_base = None
-
-    if args.flat and not output_base:
-        print("⚠️  Warning: --flat is only meaningful when used with --output. Ignoring --flat.")
+        if args.rename:
+            print("⚠️  Warning: --rename is most useful when combined with --output.")
 
     extensions = {ext.strip().lower() for ext in args.extensions.split(",") if ext.strip()}
-    replacement_rules = load_replacement_rules(args.replace, args.rules_file)
+    rules = load_replacement_rules(args.replace, args.rules_file)
 
-    print(f"🚀 Starting redaction in folder: {src_dir}")
+    print(f"🚀 Starting redaction in: {src_dir}")
     print(f"   Extensions       : {', '.join(sorted(extensions))}")
-    print(f"   Number of rules  : {len(replacement_rules)}")
-    print(f"   New file suffix  : {args.suffix}")
+    print(f"   Rules            : {len(rules)}")
+    print(f"   Suffix           : {args.suffix}")
+    print(f"   Rename mode      : {'Enabled' if args.rename else 'Disabled'}")
     print(f"   Output mode      : {'Flat' if args.flat and output_base else 'Preserve structure'}")
     print(f"   Dry-run          : {'Yes' if args.dry_run else 'No'}\n")
 
@@ -165,37 +168,30 @@ def main():
             print(f"❌ Error reading {file_path}: {e}")
             continue
 
+        # Replace content
         new_content = content
-        for search, replace in replacement_rules:
+        for search, replace in rules:
             if args.regex:
                 new_content = re.sub(search, replace, new_content)
             else:
                 new_content = new_content.replace(search, replace)
 
-        if new_content == content:
+        if new_content == content and not args.rename:
             skipped += 1
             continue
 
-        # Determine output path
-        if output_base:
-            if args.flat:
-                new_filename = get_flat_filename(file_path, src_dir, args.suffix)
-                new_path = output_base / new_filename
-            else:
-                # Preserve folder structure
-                relative = file_path.relative_to(src_dir)
-                new_filename = f"{relative.stem}{args.suffix}{relative.suffix}"
-                new_path = output_base / relative.parent / new_filename
-                new_path.parent.mkdir(parents=True, exist_ok=True)
-        else:
-            # Default: next to original file
-            new_filename = f"{file_path.stem}{args.suffix}{file_path.suffix}"
-            new_path = file_path.parent / new_filename
+        # Get final output path (with optional rename)
+        new_path = get_output_path(
+            file_path, src_dir, output_base, args.suffix,
+            args.flat, args.rename, rules, args.regex
+        )
 
         if args.dry_run:
             print(f"[DRY-RUN] Would create → {new_path}")
         else:
             try:
+                if new_path.parent != file_path.parent:  # only create dirs if needed
+                    new_path.parent.mkdir(parents=True, exist_ok=True)
                 new_path.write_text(new_content, encoding=args.encoding)
                 print(f"✅ Created: {new_path}")
                 created += 1
@@ -211,7 +207,7 @@ def main():
     print(f"   Files created       : {created}")
     print(f"   Files skipped       : {skipped}")
     print("=" * 70)
-    print("Original files remain 100% untouched and safe.")
+    print("Original files and folders remain untouched.")
 
 
 if __name__ == "__main__":
